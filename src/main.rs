@@ -4,12 +4,13 @@ use ratatui::{
     crossterm::event::{self, Event},
     layout::{Constraint, Layout},
     style::{Color, Stylize},
-    widgets::{Block, BorderType::Rounded, List, ListItem, Paragraph, Widget},
+    widgets::{Block, BorderType::Rounded, List, ListItem, ListState, Paragraph, Widget},
 };
 
 #[derive(Debug, Default)]
 struct AppState {
     todo_items: Vec<TodoItem>,
+    list_state: ListState,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -42,8 +43,6 @@ fn main() -> Result<()> {
         description: String::from("finish app"),
     });
 
-
-
     color_eyre::install()?;
     let terminal = ratatui::init();
     let result = run(terminal, &mut state);
@@ -58,7 +57,22 @@ fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
         if let Event::Key(key) = event::read()? {
             match key.code {
                 event::KeyCode::Esc => break,
-                event::KeyCode::Char('q') => break,
+                event::KeyCode::Up => {
+                    state.list_state.select_previous();
+                }
+                event::KeyCode::Down => {
+                    state.list_state.select_next();
+                }
+                event::KeyCode::Char(char) => match char {
+                    'q' => break,
+                    'j' => {
+                        state.list_state.select_previous();
+                    }
+                    'k' => {
+                        state.list_state.select_next();
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -66,7 +80,7 @@ fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-fn render(frame: &mut Frame, state: &AppState) {
+fn render(frame: &mut Frame, state: &mut AppState) {
     let [border_area] = Layout::vertical([Constraint::Fill(1)])
         .margin(1)
         .areas(frame.area());
@@ -80,13 +94,16 @@ fn render(frame: &mut Frame, state: &AppState) {
         .fg(Color::Yellow)
         .render(border_area, frame.buffer_mut());
 
-    List::new(
+    let list = List::new(
         state
             .todo_items
             .iter()
             .map(|x| ListItem::from(x.description.clone())),
     )
-    .render(list_area, frame.buffer_mut());
+    .highlight_symbol("> ")
+    .highlight_style(Color::Blue);
+
+    frame.render_stateful_widget(list, list_area, &mut state.list_state);
 
     // Paragraph::new("Hello, world!").render(frame.area(), frame.buffer_mut());
 }
