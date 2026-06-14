@@ -4,7 +4,8 @@ use ratatui::{
     crossterm::event::{self, Event, KeyEvent},
     layout::{Constraint, Layout},
     style::{Color, Stylize},
-    widgets::{Block, BorderType::Rounded, List, ListItem, ListState, Padding, Paragraph, Widget},
+    text::ToSpan,
+    widgets::{Block, BorderType::Rounded, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
 #[derive(Debug, Default)]
@@ -21,30 +22,15 @@ struct TodoItem {
     description: String,
 }
 
+enum FormAction {
+    None,
+    Submit,
+    Escape,
+}
+
 fn main() -> Result<()> {
     let mut state = AppState::default();
     state.is_add_new = false;
-
-    state.todo_items.push(TodoItem {
-        completed: false,
-        description: String::from("finish app 1"),
-    });
-    state.todo_items.push(TodoItem {
-        completed: false,
-        description: String::from("finish app 2"),
-    });
-    state.todo_items.push(TodoItem {
-        completed: false,
-        description: String::from("finish app 3"),
-    });
-    state.todo_items.push(TodoItem {
-        completed: false,
-        description: String::from("finish app 4"),
-    });
-    state.todo_items.push(TodoItem {
-        completed: false,
-        description: String::from("finish app 5"),
-    });
 
     color_eyre::install()?;
     let terminal = ratatui::init();
@@ -59,8 +45,20 @@ fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
 
         if let Event::Key(key) = event::read()? {
             if state.is_add_new {
-                if handle_add_new(key, state) {
-                    state.is_add_new = false;
+                match handle_add_new(key, state) {
+                    FormAction::Submit => {
+                        state.is_add_new = false;
+                        state.todo_items.push(TodoItem {
+                            completed: false,
+                            description: state.input_value.clone(),
+                        });
+                        state.input_value.clear();
+                    }
+                    FormAction::Escape => {
+                        state.is_add_new = false;
+                        state.input_value.clear();
+                    }
+                    FormAction::None => {}
                 }
             } else if handle_key(key, state) {
                 break;
@@ -70,17 +68,12 @@ fn run(mut terminal: DefaultTerminal, state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-fn handle_add_new(key: KeyEvent, state: &mut AppState) -> bool {
+fn handle_add_new(key: KeyEvent, state: &mut AppState) -> FormAction {
     match key.code {
         event::KeyCode::Enter => {
-            state.todo_items.push(TodoItem {
-                completed: false,
-                description: state.input_value.clone(),
-            });
-            state.input_value.clear();
-            return true;
+            return FormAction::Submit;
         }
-        event::KeyCode::Esc => return true,
+        event::KeyCode::Esc => return FormAction::Escape,
         event::KeyCode::Char(char) => {
             state.input_value.push(char);
         }
@@ -89,12 +82,19 @@ fn handle_add_new(key: KeyEvent, state: &mut AppState) -> bool {
         }
         _ => {}
     }
-    false
+    FormAction::None
 }
 
 fn handle_key(key: KeyEvent, state: &mut AppState) -> bool {
     match key.code {
         event::KeyCode::Esc => return true,
+        event::KeyCode::Enter => {
+            if let Some(index) = state.list_state.selected() {
+                if let Some(item) = state.todo_items.get_mut(index) {
+                    item.completed = !item.completed;
+                }
+            }
+        }
         event::KeyCode::Up => {
             state.list_state.select_previous();
         }
@@ -106,7 +106,6 @@ fn handle_key(key: KeyEvent, state: &mut AppState) -> bool {
             'A' => {
                 state.is_add_new = true;
             }
-
             'D' => {
                 if let Some(index) = state.list_state.selected() {
                     state.todo_items.remove(index);
@@ -130,40 +129,57 @@ fn render(frame: &mut Frame, state: &mut AppState) {
         .margin(1)
         .areas(frame.area());
 
-    let [list_area] = Layout::vertical([Constraint::Fill(1)])
-        .margin(1)
+    let [mut list_area] = Layout::vertical([Constraint::Fill(1)])
+        .margin(2)
         .areas(border_area);
 
     Block::bordered()
+        .title(" Toodles ".to_span().into_centered_line())
+        .title_bottom(
+            " [↑/↓] select, [enter] toggle, [A] add new, [D] delete, [esc] quit "
+                .to_span()
+                .into_centered_line(),
+        )
         .border_type(Rounded)
         .fg(Color::Yellow)
         .render(border_area, frame.buffer_mut());
 
-    let list = List::new(
-        state
-            .todo_items
-            .iter()
-            .map(|x| ListItem::from(x.description.clone())),
-    )
+    let list = List::new(state.todo_items.iter().map(|x| {
+        let value = if x.completed {
+            x.description.to_span().crossed_out()
+        } else {
+            x.description.to_span()
+        };
+        ListItem::from(value)
+    }))
     .highlight_symbol("> ")
     .highlight_style(Color::Blue);
 
-    frame.render_stateful_widget(list, list_area, &mut state.list_state);
-
     if state.is_add_new {
-        let [_, add_new_area] = Layout::vertical([Constraint::Fill(1), Constraint::Length(5)])
-            .margin(1)
-            .areas(border_area);
+        let [new_list_area, add_new_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(5)])
+                .margin(2)
+                .areas(border_area);
+        list_area = new_list_area;
 
-        Paragraph::new(state.input_value.clone())
+        Paragraph::new(state.input_value.clone() + "█")
             .block(
                 Block::bordered()
-                    .padding(Padding::uniform(1))
-                    .border_type(Rounded),
+                    .title(" Add new task ".to_span().into_centered_line())
+                    .title_bottom(" [Enter] to submit ".to_span().into_centered_line())
+                    // .padding(Padding::uniform(1))
+                    .border_type(Rounded)
+                    .fg(Color::Green),
             )
-            .fg(Color::Green)
+            .wrap(Wrap { trim: true })
+            .fg(Color::White)
             .render(add_new_area, frame.buffer_mut());
+
+        // frame.set_cursor_position(Position::new(
+        //     add_new_area.x + 1 + state.input_value.len() as u16,
+        //     add_new_area.y + 1,
+        // ));
     }
 
-    // Paragraph::new("Hello, world!").render(frame.area(), frame.buffer_mut());
+    frame.render_stateful_widget(list, list_area, &mut state.list_state);
 }
